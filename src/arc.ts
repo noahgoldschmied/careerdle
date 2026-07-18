@@ -50,3 +50,9 @@ export function collapseArc(stints: SeasonStint[]): DisplayChip[] {
   }
   return chips;
 }
+
+export function arcSignature(stints: SeasonStint[]): string {
+  return collapseArc(stints)
+    .map((c) => `${c.team}|${c.startYear}|${c.endYear}|${c.joinedMidSeason ? 1 : 0}|${c.leftMidSeason ? 1 : 0}`)
+    .join(";");
+}

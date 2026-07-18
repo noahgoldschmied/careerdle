@@ -1,4 +1,5 @@
 import type { Player } from "./types.ts";
+import { arcSignature } from "./arc.ts";
 
 export interface RoundState {
   phase: "pending" | "answered";
@@ -36,6 +37,17 @@ function findById(players: Player[], id: number): Player {
   return p;
 }
 
+function acceptedNames(target: Player, players: Player[]): string[] {
+  const sig = arcSignature(target.seasons);
+  return players
+    .filter((p) => arcSignature(p.seasons) === sig)
+    .map((p) => p.name);
+}
+
+function normalize(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 function nextRound(state: RoundState, players: Player[]): RoundState {
   let candidates = players.filter((p) => !state.usedIds.has(p.id));
   let usedIds = state.usedIds;
@@ -59,7 +71,8 @@ export function roundReducer(state: RoundState, action: RoundAction, players: Pl
     case "guess": {
       if (state.phase !== "pending") return state;
       const target = findById(players, state.currentId);
-      const isMatch = action.guess.trim().toLowerCase() === target.name.trim().toLowerCase();
+      const accepted = new Set(acceptedNames(target, players).map(normalize));
+      const isMatch = accepted.has(normalize(action.guess));
       return {
         ...state,
         phase: "answered",
