@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { collapseArc, seasonStartYear, seasonEndYear } from "./arc.ts";
+import { collapseArc, seasonStartYear, seasonEndYear, arcSignature } from "./arc.ts";
 import type { SeasonStint } from "./types.ts";
 
 const s = (season: string, team: string, gp = 50, stintOrder?: number): SeasonStint => ({
@@ -68,5 +68,36 @@ describe("collapseArc", () => {
       s("20222023", "NSH", 10, 3),
     ]);
     expect(arc.map((c) => c.team)).toEqual(["NSH", "MTL", "NSH"]);
+  });
+});
+
+describe("arcSignature", () => {
+  it("returns identical signatures for identical stint sequences", () => {
+    const stints = [
+      { season: "20002001", team: "VAN", gamesPlayed: 82 },
+      { season: "20012002", team: "VAN", gamesPlayed: 79 },
+    ];
+    expect(arcSignature(stints)).toBe(arcSignature([...stints]));
+  });
+
+  it("differs when teams differ", () => {
+    const a = [{ season: "20002001", team: "VAN", gamesPlayed: 82 }];
+    const b = [{ season: "20002001", team: "TOR", gamesPlayed: 82 }];
+    expect(arcSignature(a)).not.toBe(arcSignature(b));
+  });
+
+  it("differs when year ranges differ", () => {
+    const a = [{ season: "20002001", team: "VAN", gamesPlayed: 82 }];
+    const b = [{ season: "20012002", team: "VAN", gamesPlayed: 82 }];
+    expect(arcSignature(a)).not.toBe(arcSignature(b));
+  });
+
+  it("differs when a mid-season trade splits the arc", () => {
+    const soloVan = [{ season: "20002001", team: "VAN", gamesPlayed: 82 }];
+    const traded = [
+      { season: "20002001", team: "VAN", gamesPlayed: 40, stintOrder: 1 },
+      { season: "20002001", team: "TOR", gamesPlayed: 42, stintOrder: 2 },
+    ];
+    expect(arcSignature(soloVan)).not.toBe(arcSignature(traded));
   });
 });

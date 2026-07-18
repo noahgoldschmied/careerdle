@@ -1,9 +1,9 @@
 import { writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Player, SeasonStint } from "../src/types.ts";
+import type { Player, Pool, SeasonStint } from "../src/types.ts";
 
-const POOL_SIZE = 500;
+const ALL_TIME_POOL_SIZE = 500;
 const PAGE_SIZE = 100;
 const CONCURRENCY = 4;
 const MAX_RETRIES = 5;
@@ -19,6 +19,7 @@ interface SkaterRow {
   skaterFullName: string;
   positionCode: string;
   gamesPlayed: number;
+  points: number;
 }
 
 interface LandingSeason {
@@ -26,11 +27,17 @@ interface LandingSeason {
   gameTypeId: number;
   leagueAbbrev: string;
   gamesPlayed: number;
+  points: number;
   teamName: { default: string };
 }
 
 interface LandingResponse {
   seasonTotals: LandingSeason[];
+}
+
+interface SeasonRow {
+  id: number;
+  startDate: string;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -42,7 +49,6 @@ async function fetchJson<T>(url: string): Promise<T> {
   while (true) {
     const res = await fetch(url);
     if (res.ok) return (await res.json()) as T;
-    // Retry on rate limits and transient 5xx.
     const transient = res.status === 429 || res.status >= 500;
     if (!transient || attempt >= MAX_RETRIES) {
       throw new Error(`${res.status} ${res.statusText} for ${url}`);
@@ -65,9 +71,26 @@ async function fetchTeamMap(): Promise<Map<string, string>> {
   return map;
 }
 
-async function fetchPlayerPool(total: number): Promise<SkaterRow[]> {
+async function fetchCurrentSeasonId(): Promise<number> {
+  const res = await fetchJson<{ data: SeasonRow[] }>(
+    "https://api.nhle.com/stats/rest/en/season",
+  );
+  // NOTE: `data` is NOT sorted by id (verified empirically — the plan's
+  // assumption that data[0] is the latest season is false; the API returns
+  // an effectively unordered list, e.g. 1953-54 appears first). Instead,
+  // pick the most recent season that has already started.
+  const now = Date.now();
+  const started = res.data
+    .filter((s) => new Date(s.startDate).getTime() <= now)
+    .sort((a, b) => b.id - a.id);
+  const latest = started[0];
+  if (!latest) throw new Error("no seasons returned");
+  return latest.id;
+}
+
+async function fetchAllTime(total: number): Promise<SkaterRow[]> {
   const sort = encodeURIComponent(
-    JSON.stringify([{ property: "gamesPlayed", direction: "DESC" }]),
+    JSON.stringify([{ property: "points", direction: "DESC" }]),
   );
   const all: SkaterRow[] = [];
   for (let start = 0; start < total; start += PAGE_SIZE) {
@@ -80,6 +103,28 @@ async function fetchPlayerPool(total: number): Promise<SkaterRow[]> {
     if (res.data.length < PAGE_SIZE) break;
   }
   return all.slice(0, total);
+}
+
+async function fetchActive(seasonId: number): Promise<SkaterRow[]> {
+  const sort = encodeURIComponent(
+    JSON.stringify([{ property: "points", direction: "DESC" }]),
+  );
+  const cayenne = encodeURIComponent(
+    `gameTypeId=2 and seasonId=${seasonId}`,
+  );
+  const all: SkaterRow[] = [];
+  let start = 0;
+  while (true) {
+    const url =
+      `https://api.nhle.com/stats/rest/en/skater/summary` +
+      `?limit=${PAGE_SIZE}&start=${start}&sort=${sort}` +
+      `&cayenneExp=${cayenne}&isAggregate=false`;
+    const res = await fetchJson<{ data: SkaterRow[] }>(url);
+    all.push(...res.data);
+    if (res.data.length < PAGE_SIZE) break;
+    start += PAGE_SIZE;
+  }
+  return all;
 }
 
 async function fetchLanding(id: number): Promise<LandingResponse> {
@@ -96,15 +141,12 @@ function toStints(
   const nhlRows = landing.seasonTotals.filter(
     (s) => s.leagueAbbrev === "NHL" && s.gameTypeId === 2,
   );
-
-  // Within a season, array order is chronological — used for mid-season trade order.
   const bySeason = new Map<number, LandingSeason[]>();
   for (const row of nhlRows) {
     const arr = bySeason.get(row.season) ?? [];
     arr.push(row);
     bySeason.set(row.season, arr);
   }
-
   const stints: SeasonStint[] = [];
   const seasons = [...bySeason.keys()].sort((a, b) => a - b);
   for (const season of seasons) {
@@ -127,6 +169,44 @@ function toStints(
     });
   }
   return stints;
+}
+
+function careerPointsFromLanding(landing: LandingResponse): number {
+  return landing.seasonTotals
+    .filter((s) => s.leagueAbbrev === "NHL" && s.gameTypeId === 2)
+    .reduce((sum, s) => sum + (s.points ?? 0), 0);
+}
+
+interface Candidate {
+  playerId: number;
+  skaterFullName: string;
+  positionCode: string;
+  pools: Set<Pool>;
+}
+
+function unionCandidates(
+  allTime: SkaterRow[],
+  active: SkaterRow[],
+): Candidate[] {
+  const byId = new Map<number, Candidate>();
+  const add = (rows: SkaterRow[], tag: Pool) => {
+    for (const r of rows) {
+      const existing = byId.get(r.playerId);
+      if (existing) {
+        existing.pools.add(tag);
+      } else {
+        byId.set(r.playerId, {
+          playerId: r.playerId,
+          skaterFullName: r.skaterFullName,
+          positionCode: r.positionCode,
+          pools: new Set([tag]),
+        });
+      }
+    }
+  };
+  add(allTime, "allTime");
+  add(active, "active");
+  return [...byId.values()];
 }
 
 async function pool<T, R>(
@@ -155,31 +235,45 @@ async function main() {
   const teams = await fetchTeamMap();
   console.log(`  ${teams.size} teams`);
 
-  console.log(`Fetching top ${POOL_SIZE} skaters by career GP...`);
-  const skaters = await fetchPlayerPool(POOL_SIZE);
-  console.log(`  ${skaters.length} skaters`);
+  console.log("Looking up current season...");
+  const currentSeason = await fetchCurrentSeasonId();
+  console.log(`  current season: ${currentSeason}`);
+
+  console.log(`Fetching top ${ALL_TIME_POOL_SIZE} skaters by career points...`);
+  const allTime = await fetchAllTime(ALL_TIME_POOL_SIZE);
+  console.log(`  ${allTime.length} all-time`);
+
+  console.log(`Fetching active skaters (season ${currentSeason})...`);
+  const active = await fetchActive(currentSeason);
+  console.log(`  ${active.length} active`);
+
+  const candidates = unionCandidates(allTime, active);
+  console.log(`Unioned to ${candidates.length} candidates`);
 
   console.log(`Fetching landing pages (concurrency ${CONCURRENCY})...`);
   let done = 0;
-  const players = await pool(skaters, CONCURRENCY, async (s) => {
+  const players = await pool(candidates, CONCURRENCY, async (c) => {
     try {
-      const landing = await fetchLanding(s.playerId);
-      const seasons = toStints(landing, teams, s.skaterFullName);
+      const landing = await fetchLanding(c.playerId);
+      const seasons = toStints(landing, teams, c.skaterFullName);
+      const careerPoints = careerPointsFromLanding(landing);
       done++;
-      if (done % 25 === 0 || done === skaters.length) {
-        console.log(`  ${done}/${skaters.length}`);
+      if (done % 25 === 0 || done === candidates.length) {
+        console.log(`  ${done}/${candidates.length}`);
       }
       if (seasons.length === 0) return null;
       const player: Player = {
-        id: s.playerId,
-        name: s.skaterFullName,
-        position: s.positionCode,
+        id: c.playerId,
+        name: c.skaterFullName,
+        position: c.positionCode,
         seasons,
+        pools: [...c.pools],
+        careerPoints,
       };
       return player;
     } catch (err) {
       console.warn(
-        `  failed ${s.playerId} ${s.skaterFullName}: ${(err as Error).message}`,
+        `  failed ${c.playerId} ${c.skaterFullName}: ${(err as Error).message}`,
       );
       return null;
     }

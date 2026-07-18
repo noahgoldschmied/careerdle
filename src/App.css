@@ -242,3 +242,49 @@
 .round__result button:hover {
   background: var(--accent-strong);
 }
+
+/* --- mode selector --- */
+
+.mode-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mode-selector__row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mode-selector__btn {
+  flex: 1 1 0;
+  min-width: 120px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.mode-selector__btn:hover:not(.is-selected) {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--text-muted);
+}
+
+.mode-selector__btn.is-selected {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.mode-selector__caption {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  align-self: flex-end;
+}
