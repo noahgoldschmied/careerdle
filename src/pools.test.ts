@@ -63,7 +63,7 @@ describe("derivePool", () => {
 
 describe("poolLabel", () => {
   it("returns human-readable labels for each mode", () => {
-    expect(poolLabel("allTime")).toBe("All-time top scorers");
+    expect(poolLabel("allTime")).toBe("All-Time Top Scorers");
     expect(poolLabel("activeEasy")).toBe("Active — Easy");
     expect(poolLabel("activeHard")).toBe("Active — Hard");
   });

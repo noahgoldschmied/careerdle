@@ -34,7 +34,7 @@ export function derivePool(players: Player[], mode: Mode): Player[] {
 export function poolLabel(mode: Mode): string {
   switch (mode) {
     case "allTime":
-      return "All-time top scorers";
+      return "All-Time Top Scorers";
     case "activeEasy":
       return "Active — Easy";
     case "activeHard":
