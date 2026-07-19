@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { Mode, Player } from "../types.ts";
 import type { RoundState } from "../game.ts";
 import { CareerArc } from "./CareerArc.tsx";
@@ -74,6 +75,10 @@ export function RoundView({
         .filter((n) => n !== acceptedName)
     : [];
   const hasArcTwin = arcTwins.length > 0;
+  const nextBtnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (answered) nextBtnRef.current?.focus();
+  }, [answered]);
   return (
     <section className="round">
       <CareerArc stints={player.seasons} />
@@ -116,7 +121,7 @@ export function RoundView({
               </>
             )}
           </div>
-          <button type="button" onClick={onNext}>Next player →</button>
+          <button ref={nextBtnRef} type="button" onClick={onNext}>Next player →</button>
         </div>
       )}
     </section>
