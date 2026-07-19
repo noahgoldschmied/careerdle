@@ -15,6 +15,7 @@ function make(
     seasons: [{ season: "20232024", team: "TOR", gamesPlayed: 82 }],
     pools,
     careerPoints,
+    birthCountry: "CAN",
   };
 }
 

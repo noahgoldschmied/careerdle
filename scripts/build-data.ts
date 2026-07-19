@@ -1,4 +1,4 @@
-import { writeFile, mkdir } from "node:fs/promises";
+import { writeFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Player, Pool, SeasonStint } from "../src/types.ts";
@@ -8,6 +8,7 @@ const PAGE_SIZE = 100;
 const CONCURRENCY = 4;
 const MAX_RETRIES = 5;
 const OUT_PATH = new URL("../public/data/players.json", import.meta.url);
+const CACHE_DIR = new URL("../.cache/landing/", import.meta.url);
 
 interface TeamRow {
   fullName: string;
@@ -33,6 +34,7 @@ interface LandingSeason {
 
 interface LandingResponse {
   seasonTotals: LandingSeason[];
+  birthCountry?: string;
 }
 
 interface SeasonRow {
@@ -92,17 +94,19 @@ async function fetchAllTime(total: number): Promise<SkaterRow[]> {
   const sort = encodeURIComponent(
     JSON.stringify([{ property: "points", direction: "DESC" }]),
   );
-  const all: SkaterRow[] = [];
-  for (let start = 0; start < total; start += PAGE_SIZE) {
-    const url =
-      `https://api.nhle.com/stats/rest/en/skater/summary` +
-      `?limit=${PAGE_SIZE}&start=${start}&sort=${sort}` +
-      `&cayenneExp=gameTypeId=2&isAggregate=true`;
-    const res = await fetchJson<{ data: SkaterRow[] }>(url);
-    all.push(...res.data);
-    if (res.data.length < PAGE_SIZE) break;
-  }
-  return all.slice(0, total);
+  // Total is known; fire all pages concurrently.
+  const pageCount = Math.ceil(total / PAGE_SIZE);
+  const pages = await Promise.all(
+    Array.from({ length: pageCount }, (_, i) => {
+      const start = i * PAGE_SIZE;
+      const url =
+        `https://api.nhle.com/stats/rest/en/skater/summary` +
+        `?limit=${PAGE_SIZE}&start=${start}&sort=${sort}` +
+        `&cayenneExp=gameTypeId=2&isAggregate=true`;
+      return fetchJson<{ data: SkaterRow[] }>(url);
+    }),
+  );
+  return pages.flatMap((p) => p.data).slice(0, total);
 }
 
 async function fetchActive(seasonId: number): Promise<SkaterRow[]> {
@@ -127,10 +131,33 @@ async function fetchActive(seasonId: number): Promise<SkaterRow[]> {
   return all;
 }
 
-async function fetchLanding(id: number): Promise<LandingResponse> {
-  return fetchJson<LandingResponse>(
+async function readCachedLanding(id: number): Promise<LandingResponse | null> {
+  const path = fileURLToPath(new URL(`${id}.json`, CACHE_DIR));
+  try {
+    const raw = await readFile(path, "utf8");
+    return JSON.parse(raw) as LandingResponse;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw err;
+  }
+}
+
+async function writeCachedLanding(id: number, data: LandingResponse): Promise<void> {
+  const path = fileURLToPath(new URL(`${id}.json`, CACHE_DIR));
+  await writeFile(path, JSON.stringify(data));
+}
+
+async function fetchLanding(id: number, currentSeason: number): Promise<LandingResponse> {
+  const cached = await readCachedLanding(id);
+  // Cache is only valid if the player didn't play in the current season —
+  // an in-progress season can change (mid-season trades, appended games).
+  const touchesCurrent = cached?.seasonTotals.some((s) => s.season === currentSeason);
+  if (cached && !touchesCurrent) return cached;
+  const fresh = await fetchJson<LandingResponse>(
     `https://api-web.nhle.com/v1/player/${id}/landing`,
   );
+  await writeCachedLanding(id, fresh);
+  return fresh;
 }
 
 function toStints(
@@ -231,30 +258,28 @@ async function pool<T, R>(
 }
 
 async function main() {
-  console.log("Fetching team abbreviation map...");
-  const teams = await fetchTeamMap();
-  console.log(`  ${teams.size} teams`);
+  await mkdir(fileURLToPath(CACHE_DIR), { recursive: true });
 
-  console.log("Looking up current season...");
-  const currentSeason = await fetchCurrentSeasonId();
-  console.log(`  current season: ${currentSeason}`);
-
-  console.log(`Fetching top ${ALL_TIME_POOL_SIZE} skaters by career points...`);
-  const allTime = await fetchAllTime(ALL_TIME_POOL_SIZE);
-  console.log(`  ${allTime.length} all-time`);
-
-  console.log(`Fetching active skaters (season ${currentSeason})...`);
-  const active = await fetchActive(currentSeason);
-  console.log(`  ${active.length} active`);
+  console.log("Bootstrapping (teams, season, all-time, active) in parallel...");
+  const [teams, allTime, [currentSeason, active]] = await Promise.all([
+    fetchTeamMap(),
+    fetchAllTime(ALL_TIME_POOL_SIZE),
+    fetchCurrentSeasonId().then(async (id) => [id, await fetchActive(id)] as const),
+  ]);
+  console.log(
+    `  ${teams.size} teams (season ${currentSeason}), ${allTime.length} all-time, ${active.length} active`,
+  );
 
   const candidates = unionCandidates(allTime, active);
   console.log(`Unioned to ${candidates.length} candidates`);
 
-  console.log(`Fetching landing pages (concurrency ${CONCURRENCY})...`);
+  console.log(
+    `Fetching landing pages (concurrency ${CONCURRENCY}, disk-cached)...`,
+  );
   let done = 0;
   const players = await pool(candidates, CONCURRENCY, async (c) => {
     try {
-      const landing = await fetchLanding(c.playerId);
+      const landing = await fetchLanding(c.playerId, currentSeason);
       const seasons = toStints(landing, teams, c.skaterFullName);
       const careerPoints = careerPointsFromLanding(landing);
       done++;
@@ -269,6 +294,7 @@ async function main() {
         seasons,
         pools: [...c.pools],
         careerPoints,
+        birthCountry: landing.birthCountry ?? "",
       };
       return player;
     } catch (err) {

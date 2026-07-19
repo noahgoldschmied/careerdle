@@ -60,7 +60,7 @@ function Game({ pool, mode, onModeChange }: GameProps) {
 
   return (
     <div className="app">
-      <StatsHeader correct={state.correct} attempted={state.attempted} />
+      <StatsHeader buckets={state.buckets} />
       <main>
         <RoundView
           player={current}
@@ -70,7 +70,7 @@ function Game({ pool, mode, onModeChange }: GameProps) {
           poolSize={pool.length}
           onModeChange={onModeChange}
           onGuess={(name) => dispatch({ type: "guess", guess: name })}
-          onReveal={() => dispatch({ type: "reveal" })}
+          onGiveUp={() => dispatch({ type: "giveUp" })}
           onNext={() => dispatch({ type: "next" })}
         />
       </main>

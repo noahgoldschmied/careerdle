@@ -4,122 +4,169 @@ import type { RoundState } from "./game.ts";
 import type { Player } from "./types.ts";
 
 const P: Player[] = [
-  { id: 1, name: "Sidney Crosby", position: "C", seasons: [], pools: ["allTime"], careerPoints: 0 },
-  { id: 2, name: "Connor McDavid", position: "C", seasons: [], pools: ["allTime"], careerPoints: 0 },
-  { id: 3, name: "Nathan MacKinnon", position: "C", seasons: [], pools: ["allTime"], careerPoints: 0 },
+  { id: 1, name: "Sidney Crosby", position: "C", seasons: [], pools: ["allTime"], careerPoints: 0, birthCountry: "CAN" },
+  { id: 2, name: "Connor McDavid", position: "C", seasons: [], pools: ["allTime"], careerPoints: 0, birthCountry: "CAN" },
+  { id: 3, name: "Nathan MacKinnon", position: "C", seasons: [], pools: ["allTime"], careerPoints: 0, birthCountry: "CAN" },
 ];
 
+function pending(currentId: number): RoundState {
+  return {
+    phase: "pending",
+    currentId,
+    wasCorrect: null,
+    gaveUp: false,
+    hintsShown: 0,
+    usedIds: new Set([currentId]),
+    buckets: { none: 0, one: 0, two: 0, three: 0, wrong: 0 },
+  };
+}
+
 describe("createInitialRound", () => {
-  it("starts in pending with 0/0 and current in used", () => {
+  it("starts pending with empty buckets, 0 hints, current in used", () => {
     const s = createInitialRound(P);
     expect(s.phase).toBe("pending");
-    expect(s.correct).toBe(0);
-    expect(s.attempted).toBe(0);
+    expect(s.hintsShown).toBe(0);
+    expect(s.gaveUp).toBe(false);
+    expect(s.buckets).toEqual({ none: 0, one: 0, two: 0, three: 0, wrong: 0 });
     expect(s.usedIds.has(s.currentId)).toBe(true);
   });
 });
 
-describe("roundReducer", () => {
-  it("correct guess flips to answered with wasCorrect=true", () => {
-    const s: any = { phase: "pending", currentId: 1, wasCorrect: null, usedIds: new Set([1]), correct: 0, attempted: 0 };
-    const n = roundReducer(s, { type: "guess", guess: "sidney crosby" }, P);
-    expect(n).toMatchObject({ phase: "answered", wasCorrect: true, correct: 1, attempted: 1 });
+describe("roundReducer — guessing", () => {
+  it("correct guess with 0 hints buckets into 'none'", () => {
+    const n = roundReducer(pending(1), { type: "guess", guess: "sidney crosby" }, P);
+    expect(n).toMatchObject({ phase: "answered", wasCorrect: true });
+    expect(n.buckets).toEqual({ none: 1, one: 0, two: 0, three: 0, wrong: 0 });
   });
 
-  it("incorrect guess: attempted++, correct unchanged", () => {
-    const s: any = { phase: "pending", currentId: 1, wasCorrect: null, usedIds: new Set([1]), correct: 0, attempted: 0 };
-    const n = roundReducer(s, { type: "guess", guess: "Wayne Gretzky" }, P);
-    expect(n).toMatchObject({ phase: "answered", wasCorrect: false, correct: 0, attempted: 1 });
+  it("wrong guess reveals hint 1 and stays pending", () => {
+    const n = roundReducer(pending(1), { type: "guess", guess: "Wayne Gretzky" }, P);
+    expect(n.phase).toBe("pending");
+    expect(n.hintsShown).toBe(1);
+    expect(n.buckets.wrong).toBe(0);
   });
 
-  it("reveal counts as an incorrect answer", () => {
-    const s: any = { phase: "pending", currentId: 1, wasCorrect: null, usedIds: new Set([1]), correct: 0, attempted: 0 };
-    const n = roundReducer(s, { type: "reveal" }, P);
-    expect(n).toMatchObject({ phase: "answered", wasCorrect: false, attempted: 1 });
+  it("correct guess after 1 hint buckets into 'one'", () => {
+    let s = pending(1);
+    s = roundReducer(s, { type: "guess", guess: "Wayne Gretzky" }, P);
+    s = roundReducer(s, { type: "guess", guess: "Sidney Crosby" }, P);
+    expect(s.phase).toBe("answered");
+    expect(s.wasCorrect).toBe(true);
+    expect(s.buckets).toEqual({ none: 0, one: 1, two: 0, three: 0, wrong: 0 });
+  });
+
+  it("correct guess after 3 hints buckets into 'three'", () => {
+    let s = pending(1);
+    s = roundReducer(s, { type: "guess", guess: "wrong-1" }, P);
+    s = roundReducer(s, { type: "guess", guess: "wrong-2" }, P);
+    s = roundReducer(s, { type: "guess", guess: "wrong-3" }, P);
+    expect(s.hintsShown).toBe(3);
+    expect(s.phase).toBe("pending");
+    s = roundReducer(s, { type: "guess", guess: "Sidney Crosby" }, P);
+    expect(s.buckets).toEqual({ none: 0, one: 0, two: 0, three: 1, wrong: 0 });
+  });
+
+  it("fourth wrong guess after 3 hints buckets into 'wrong'", () => {
+    let s = pending(1);
+    s = roundReducer(s, { type: "guess", guess: "w1" }, P);
+    s = roundReducer(s, { type: "guess", guess: "w2" }, P);
+    s = roundReducer(s, { type: "guess", guess: "w3" }, P);
+    s = roundReducer(s, { type: "guess", guess: "w4" }, P);
+    expect(s.phase).toBe("answered");
+    expect(s.wasCorrect).toBe(false);
+    expect(s.buckets.wrong).toBe(1);
   });
 
   it("guess is a no-op when already answered", () => {
-    const s: any = { phase: "answered", currentId: 1, wasCorrect: false, usedIds: new Set([1]), correct: 0, attempted: 1 };
-    const n = roundReducer(s, { type: "guess", guess: "Sidney Crosby" }, P);
-    expect(n).toBe(s);
+    const answered: RoundState = { ...pending(1), phase: "answered", wasCorrect: false };
+    const n = roundReducer(answered, { type: "guess", guess: "Sidney Crosby" }, P);
+    expect(n).toBe(answered);
+  });
+});
+
+describe("roundReducer — give up", () => {
+  it("give up reveals all 3 hints and buckets 'wrong'", () => {
+    const n = roundReducer(pending(1), { type: "giveUp" }, P);
+    expect(n.phase).toBe("answered");
+    expect(n.wasCorrect).toBe(false);
+    expect(n.gaveUp).toBe(true);
+    expect(n.hintsShown).toBe(3);
+    expect(n.buckets.wrong).toBe(1);
   });
 
-  it("next picks an unused player when possible", () => {
-    const s: any = { phase: "answered", currentId: 1, wasCorrect: true, usedIds: new Set([1]), correct: 1, attempted: 1 };
+  it("give up after 2 wrong guesses still buckets 'wrong', reveals all 3", () => {
+    let s = pending(1);
+    s = roundReducer(s, { type: "guess", guess: "w1" }, P);
+    s = roundReducer(s, { type: "guess", guess: "w2" }, P);
+    expect(s.hintsShown).toBe(2);
+    s = roundReducer(s, { type: "giveUp" }, P);
+    expect(s.hintsShown).toBe(3);
+    expect(s.buckets.wrong).toBe(1);
+  });
+
+  it("give up is a no-op when already answered", () => {
+    const answered: RoundState = { ...pending(1), phase: "answered", wasCorrect: true };
+    const n = roundReducer(answered, { type: "giveUp" }, P);
+    expect(n).toBe(answered);
+  });
+});
+
+describe("roundReducer — next", () => {
+  it("next resets hints and gaveUp, preserves buckets, picks unused", () => {
+    const s: RoundState = {
+      phase: "answered",
+      currentId: 1,
+      wasCorrect: true,
+      gaveUp: false,
+      hintsShown: 2,
+      usedIds: new Set([1]),
+      buckets: { none: 0, one: 0, two: 1, three: 0, wrong: 0 },
+    };
     const n = roundReducer(s, { type: "next" }, P);
     expect(n.phase).toBe("pending");
+    expect(n.hintsShown).toBe(0);
+    expect(n.gaveUp).toBe(false);
     expect(n.wasCorrect).toBeNull();
     expect(n.currentId).not.toBe(1);
-    expect(n.usedIds.has(n.currentId)).toBe(true);
+    expect(n.buckets).toEqual({ none: 0, one: 0, two: 1, three: 0, wrong: 0 });
   });
 
   it("next resets usedIds when everyone has been used", () => {
-    const s: any = { phase: "answered", currentId: 3, wasCorrect: true, usedIds: new Set([1,2,3]), correct: 3, attempted: 3 };
+    const s: RoundState = {
+      phase: "answered",
+      currentId: 3,
+      wasCorrect: true,
+      gaveUp: false,
+      hintsShown: 0,
+      usedIds: new Set([1, 2, 3]),
+      buckets: { none: 3, one: 0, two: 0, three: 0, wrong: 0 },
+    };
     const n = roundReducer(s, { type: "next" }, P);
     expect(n.usedIds.size).toBe(1);
   });
+});
+
+describe("roundReducer — arc twins", () => {
+  const sedinStints = [
+    { season: "20002001", team: "VAN", gamesPlayed: 82 },
+    { season: "20012002", team: "VAN", gamesPlayed: 79 },
+  ];
+  const daniel: Player = { id: 1, name: "Daniel Sedin", position: "L", seasons: sedinStints, pools: ["allTime"], careerPoints: 1000, birthCountry: "SWE" };
+  const henrik: Player = { id: 2, name: "Henrik Sedin", position: "C", seasons: sedinStints, pools: ["allTime"], careerPoints: 1000, birthCountry: "SWE" };
 
   it("credits a correct guess of an arc-twin's name", () => {
-    const sedinStints = [
-      { season: "20002001", team: "VAN", gamesPlayed: 82 },
-      { season: "20012002", team: "VAN", gamesPlayed: 79 },
-    ];
-    const daniel: Player = {
-      id: 1,
-      name: "Daniel Sedin",
-      position: "L",
-      seasons: sedinStints,
-      pools: ["allTime"],
-      careerPoints: 1000,
-    };
-    const henrik: Player = {
-      id: 2,
-      name: "Henrik Sedin",
-      position: "C",
-      seasons: sedinStints,
-      pools: ["allTime"],
-      careerPoints: 1000,
-    };
     const players = [daniel, henrik];
-    const state: RoundState = {
-      phase: "pending",
-      currentId: daniel.id,
-      wasCorrect: null,
-      usedIds: new Set([daniel.id]),
-      correct: 0,
-      attempted: 0,
-    };
-    const next = roundReducer(state, { type: "guess", guess: "Henrik Sedin" }, players);
-    expect(next.wasCorrect).toBe(true);
-    expect(next.correct).toBe(1);
+    const n = roundReducer(pending(daniel.id), { type: "guess", guess: "Henrik Sedin" }, players);
+    expect(n.wasCorrect).toBe(true);
+    expect(n.buckets.none).toBe(1);
   });
 
   it("does not accept a non-twin's name", () => {
-    const solo: Player = {
-      id: 1,
-      name: "Solo Player",
-      position: "C",
-      seasons: [{ season: "20002001", team: "VAN", gamesPlayed: 82 }],
-      pools: ["allTime"],
-      careerPoints: 500,
-    };
-    const other: Player = {
-      id: 2,
-      name: "Other Player",
-      position: "C",
-      seasons: [{ season: "20002001", team: "TOR", gamesPlayed: 82 }],
-      pools: ["allTime"],
-      careerPoints: 500,
-    };
-    const state: RoundState = {
-      phase: "pending",
-      currentId: solo.id,
-      wasCorrect: null,
-      usedIds: new Set([solo.id]),
-      correct: 0,
-      attempted: 0,
-    };
-    const next = roundReducer(state, { type: "guess", guess: "Other Player" }, [solo, other]);
-    expect(next.wasCorrect).toBe(false);
+    const solo: Player = { id: 1, name: "Solo Player", position: "C", seasons: [{ season: "20002001", team: "VAN", gamesPlayed: 82 }], pools: ["allTime"], careerPoints: 500, birthCountry: "CAN" };
+    const other: Player = { id: 2, name: "Other Player", position: "C", seasons: [{ season: "20002001", team: "TOR", gamesPlayed: 82 }], pools: ["allTime"], careerPoints: 500, birthCountry: "CAN" };
+    const n = roundReducer(pending(solo.id), { type: "guess", guess: "Other Player" }, [solo, other]);
+    expect(n.phase).toBe("pending");
+    expect(n.wasCorrect).toBeNull();
+    expect(n.hintsShown).toBe(1);
   });
 });

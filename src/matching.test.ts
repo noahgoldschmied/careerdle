@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { matchPlayers } from "./matching.ts";
 import type { Player } from "./types.ts";
 
-const p = (name: string): Player => ({ id: 0, name, position: "C", seasons: [], pools: ["allTime"], careerPoints: 0 });
+const p = (name: string): Player => ({ id: 0, name, position: "C", seasons: [], pools: ["allTime"], careerPoints: 0, birthCountry: "CAN" });
 
 const POOL = [
   p("Sidney Crosby"),
