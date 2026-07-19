@@ -2,7 +2,8 @@ import { useEffect, useMemo, useReducer, useState } from "react";
 import "./App.css";
 import type { Mode, Player } from "./types.ts";
 import { loadPlayers } from "./data.ts";
-import { createInitialRound, roundReducer } from "./game.ts";
+import type { Bucket, RoundAction } from "./game.ts";
+import { createInitialRound, emptyBuckets, resultBucket, roundReducer } from "./game.ts";
 import { derivePool } from "./pools.ts";
 import { StatsHeader } from "./components/StatsHeader.tsx";
 import { RoundView } from "./components/RoundView.tsx";
@@ -11,7 +12,6 @@ import { formatCountry } from "./countries.ts";
 function App() {
   const [players, setPlayers] = useState<Player[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>("allTime");
 
   useEffect(() => {
     loadPlayers()
@@ -22,24 +22,54 @@ function App() {
   if (error) return <div className="app-status">Failed to load: {error}</div>;
   if (!players) return <div className="app-status">Loading…</div>;
 
-  return <ModedGame players={players} mode={mode} onModeChange={setMode} />;
+  return <ModedGame players={players} />;
 }
 
 interface ModedGameProps {
   players: Player[];
-  mode: Mode;
-  onModeChange: (mode: Mode) => void;
 }
 
-function ModedGame({ players, mode, onModeChange }: ModedGameProps) {
-  const pool = useMemo(() => derivePool(players, mode), [players, mode]);
-  // key={mode} remounts Game on mode change → fresh initial round, 0/0 stats.
+type ScoresByMode = Record<Mode, Record<Bucket, number>>;
+
+function ModedGame({ players }: ModedGameProps) {
+  const [activeMode, setActiveMode] = useState<Mode>("allTime");
+  const [pendingMode, setPendingMode] = useState<Mode | null>(null);
+  const [scores, setScores] = useState<ScoresByMode>(() => ({
+    allTime: emptyBuckets(),
+    activeEasy: emptyBuckets(),
+    activeHard: emptyBuckets(),
+  }));
+
+  const pool = useMemo(() => derivePool(players, activeMode), [players, activeMode]);
+
+  const requestMode = (next: Mode) => {
+    setPendingMode(next === activeMode ? null : next);
+  };
+  const commitPendingMode = () => {
+    if (pendingMode) {
+      setActiveMode(pendingMode);
+      setPendingMode(null);
+    }
+  };
+  const recordResult = (bucket: Bucket) => {
+    setScores((s) => ({
+      ...s,
+      [activeMode]: { ...s[activeMode], [bucket]: s[activeMode][bucket] + 1 },
+    }));
+  };
+
+  // key={activeMode} remounts Game on committed mode change → fresh initial
+  // round from the new pool. Scores survive because they live here.
   return (
     <Game
-      key={mode}
+      key={activeMode}
       pool={pool}
-      mode={mode}
-      onModeChange={onModeChange}
+      mode={activeMode}
+      pendingMode={pendingMode}
+      buckets={scores[activeMode]}
+      onModeRequest={requestMode}
+      onCommitMode={commitPendingMode}
+      onRoundResult={recordResult}
     />
   );
 }
@@ -47,10 +77,14 @@ function ModedGame({ players, mode, onModeChange }: ModedGameProps) {
 interface GameProps {
   pool: Player[];
   mode: Mode;
-  onModeChange: (mode: Mode) => void;
+  pendingMode: Mode | null;
+  buckets: Record<Bucket, number>;
+  onModeRequest: (mode: Mode) => void;
+  onCommitMode: () => void;
+  onRoundResult: (bucket: Bucket) => void;
 }
 
-function Game({ pool, mode, onModeChange }: GameProps) {
+function Game({ pool, mode, pendingMode, buckets, onModeRequest, onCommitMode, onRoundResult }: GameProps) {
   const [state, dispatch] = useReducer(
     (s: ReturnType<typeof createInitialRound>, a: Parameters<typeof roundReducer>[1]) =>
       roundReducer(s, a, pool),
@@ -58,6 +92,20 @@ function Game({ pool, mode, onModeChange }: GameProps) {
     createInitialRound,
   );
   const current = pool.find((p) => p.id === state.currentId)!;
+
+  const handleAction = (action: RoundAction) => {
+    const nextState = roundReducer(state, action, pool);
+    if (state.phase === "pending" && nextState.phase === "answered") {
+      onRoundResult(resultBucket(nextState));
+    }
+    if (action.type === "next" && state.phase === "answered") {
+      // Committing the pending mode swaps the parent's activeMode, which
+      // remounts this Game with a fresh initial round from the new pool.
+      // The dispatched "next" here becomes moot in that case.
+      onCommitMode();
+    }
+    dispatch(action);
+  };
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -71,19 +119,20 @@ function Game({ pool, mode, onModeChange }: GameProps) {
 
   return (
     <div className="app">
-      <StatsHeader buckets={state.buckets} />
+      <StatsHeader buckets={buckets} mode={mode} />
       <main>
         <RoundView
           player={current}
           players={pool}
           state={state}
           mode={mode}
+          pendingMode={pendingMode}
           poolSize={pool.length}
-          onModeChange={onModeChange}
-          onGuess={(name) => dispatch({ type: "guess", guess: name })}
-          onRevealHint={() => dispatch({ type: "revealHint" })}
-          onGiveUp={() => dispatch({ type: "giveUp" })}
-          onNext={() => dispatch({ type: "next" })}
+          onModeChange={onModeRequest}
+          onGuess={(name) => handleAction({ type: "guess", guess: name })}
+          onRevealHint={() => handleAction({ type: "revealHint" })}
+          onGiveUp={() => handleAction({ type: "giveUp" })}
+          onNext={() => handleAction({ type: "next" })}
         />
       </main>
     </div>

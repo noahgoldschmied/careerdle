@@ -56,3 +56,14 @@ export function arcSignature(stints: SeasonStint[]): string {
     .map((c) => `${c.team}|${c.startYear}|${c.endYear}|${c.joinedMidSeason ? 1 : 0}|${c.leftMidSeason ? 1 : 0}`)
     .join(";");
 }
+
+// An arc is "distinctive" enough to be worth calling out shared-career-arc
+// twins for: multi-team, or a single-team stint spanning 3+ full seasons.
+// Rookie stubs (one team, one season) match too easily to be meaningful even
+// when their signatures coincide.
+export function isDistinctiveArc(stints: SeasonStint[]): boolean {
+  const chips = collapseArc(stints);
+  if (chips.length !== 1) return chips.length >= 2;
+  const only = chips[0];
+  return only.endYear - only.startYear >= 3;
+}

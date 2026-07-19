@@ -23,11 +23,26 @@
   box-shadow: var(--shadow);
 }
 
+.stats-header__title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
 .stats-header__title {
   font-size: 22px;
   font-weight: 700;
   color: var(--text-h);
   letter-spacing: -0.3px;
+}
+
+.stats-header__mode {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-muted);
 }
 
 .stats-header__score {
@@ -371,6 +386,17 @@
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-contrast);
+}
+
+.mode-selector__btn.is-pending {
+  border-style: dashed;
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: rgba(79, 140, 255, 0.08);
+}
+
+.mode-selector__btn.is-pending.is-selected {
+  border-style: solid;
 }
 
 .mode-selector__caption {

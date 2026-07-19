@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { collapseArc, seasonStartYear, seasonEndYear, arcSignature } from "./arc.ts";
+import { collapseArc, seasonStartYear, seasonEndYear, arcSignature, isDistinctiveArc } from "./arc.ts";
 import type { SeasonStint } from "./types.ts";
 
 const s = (season: string, team: string, gp = 50, stintOrder?: number): SeasonStint => ({
@@ -99,5 +99,48 @@ describe("arcSignature", () => {
       { season: "20002001", team: "TOR", gamesPlayed: 42, stintOrder: 2 },
     ];
     expect(arcSignature(soloVan)).not.toBe(arcSignature(traded));
+  });
+});
+
+describe("isDistinctiveArc", () => {
+  it("rejects a single team, single season stub (rookie call-up)", () => {
+    // Taylor Makar's real arc: only COL 25-26.
+    expect(isDistinctiveArc([s("20252026", "COL")])).toBe(false);
+  });
+
+  it("rejects a single team spanning only two seasons", () => {
+    expect(isDistinctiveArc([s("20242025", "COL"), s("20252026", "COL")])).toBe(false);
+  });
+
+  it("accepts a single team spanning three seasons", () => {
+    expect(isDistinctiveArc([
+      s("20232024", "NYR"),
+      s("20242025", "NYR"),
+      s("20252026", "NYR"),
+    ])).toBe(true);
+  });
+
+  it("accepts a long single-team career (Sedin-style)", () => {
+    const stints = Array.from({ length: 18 }, (_, i) => {
+      const y = 2000 + i;
+      return s(`${y}${y + 1}`, "VAN");
+    });
+    expect(isDistinctiveArc(stints)).toBe(true);
+  });
+
+  it("accepts multi-team arcs regardless of length", () => {
+    // Traded mid-season, one season total — still distinctive because two teams.
+    expect(isDistinctiveArc([
+      s("20252026", "TOR", 40, 1),
+      s("20252026", "BOS", 42, 2),
+    ])).toBe(true);
+  });
+
+  it("accepts a two-team career even when each stint is short", () => {
+    expect(isDistinctiveArc([s("20242025", "TOR"), s("20252026", "BOS")])).toBe(true);
+  });
+
+  it("returns false for an empty stint list", () => {
+    expect(isDistinctiveArc([])).toBe(false);
   });
 });

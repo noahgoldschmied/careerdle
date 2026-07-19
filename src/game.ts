@@ -10,7 +10,6 @@ export interface RoundState {
   gaveUp: boolean;
   hintsShown: 0 | 1 | 2 | 3;
   usedIds: Set<number>;
-  buckets: Record<Bucket, number>;
   // Canonical name of the accepted arc-twin the user matched on a correct
   // guess. Null on incorrect or give-up. Lets the UI show what the user
   // guessed instead of the round's target.
@@ -29,17 +28,21 @@ function pickRandom<T>(items: T[]): T {
   return items[Math.floor(Math.random() * items.length)];
 }
 
-function emptyBuckets(): Record<Bucket, number> {
+export function emptyBuckets(): Record<Bucket, number> {
   return { none: 0, one: 0, two: 0, three: 0, wrong: 0 };
 }
 
-function bucketFor(hintsShown: 0 | 1 | 2 | 3): Bucket {
+export function bucketFor(hintsShown: 0 | 1 | 2 | 3): Bucket {
   switch (hintsShown) {
     case 0: return "none";
     case 1: return "one";
     case 2: return "two";
     case 3: return "three";
   }
+}
+
+export function resultBucket(state: RoundState): Bucket {
+  return state.wasCorrect ? bucketFor(state.hintsShown) : "wrong";
 }
 
 export function createInitialRound(players: Player[]): RoundState {
@@ -51,7 +54,6 @@ export function createInitialRound(players: Player[]): RoundState {
     gaveUp: false,
     hintsShown: 0,
     usedIds: new Set([first.id]),
-    buckets: emptyBuckets(),
     acceptedName: null,
   };
 }
@@ -82,13 +84,6 @@ function normalize(name: string): string {
   return name.trim().toLowerCase();
 }
 
-function bumpBucket(
-  buckets: Record<Bucket, number>,
-  key: Bucket,
-): Record<Bucket, number> {
-  return { ...buckets, [key]: buckets[key] + 1 };
-}
-
 function nextRound(state: RoundState, players: Player[]): RoundState {
   let candidates = players.filter((p) => !state.usedIds.has(p.id));
   let usedIds = state.usedIds;
@@ -104,7 +99,6 @@ function nextRound(state: RoundState, players: Player[]): RoundState {
     gaveUp: false,
     hintsShown: 0,
     usedIds: new Set([...usedIds, next.id]),
-    buckets: state.buckets,
     acceptedName: null,
   };
 }
@@ -121,7 +115,6 @@ export function roundReducer(state: RoundState, action: RoundAction, players: Pl
           phase: "answered",
           wasCorrect: true,
           acceptedName: matched,
-          buckets: bumpBucket(state.buckets, bucketFor(state.hintsShown)),
         };
       }
       // Wrong guess: reveal the next hint if any remain, otherwise the round
@@ -136,7 +129,6 @@ export function roundReducer(state: RoundState, action: RoundAction, players: Pl
         ...state,
         phase: "answered",
         wasCorrect: false,
-        buckets: bumpBucket(state.buckets, "wrong"),
       };
     }
     case "revealHint": {
@@ -155,7 +147,6 @@ export function roundReducer(state: RoundState, action: RoundAction, players: Pl
         wasCorrect: false,
         gaveUp: true,
         hintsShown: HINT_CAP,
-        buckets: bumpBucket(state.buckets, "wrong"),
       };
     }
     case "next": {

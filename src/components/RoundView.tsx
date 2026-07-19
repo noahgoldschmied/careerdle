@@ -4,13 +4,14 @@ import { CareerArc } from "./CareerArc.tsx";
 import { GuessInput } from "./GuessInput.tsx";
 import { ModeSelector } from "./ModeSelector.tsx";
 import { formatCountry } from "../countries.ts";
-import { arcSignature } from "../arc.ts";
+import { arcSignature, isDistinctiveArc } from "../arc.ts";
 
 interface Props {
   player: Player;
   players: Player[];
   state: RoundState;
   mode: Mode;
+  pendingMode: Mode | null;
   poolSize: number;
   onModeChange: (mode: Mode) => void;
   onGuess: (name: string) => void;
@@ -29,6 +30,12 @@ const POSITION_LABELS: Record<string, string> = {
   G: "G",
 };
 
+function formatList(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
 function hintsFor(player: Player): Hint[] {
   const statHint: Hint = player.position === "G"
     ? { label: "Career wins", value: (player.careerWins ?? 0).toLocaleString() }
@@ -45,6 +52,7 @@ export function RoundView({
   players,
   state,
   mode,
+  pendingMode,
   poolSize,
   onModeChange,
   onGuess,
@@ -55,13 +63,21 @@ export function RoundView({
   const answered = state.phase === "answered";
   const allHints = hintsFor(player);
   const hints = answered ? allHints : allHints.slice(0, state.hintsShown);
-  const hasArcTwin = answered && state.wasCorrect
-    ? players.some((p) => p.id !== player.id && arcSignature(p.seasons) === arcSignature(player.seasons))
-    : false;
+  const acceptedName = state.acceptedName ?? player.name;
+  // Only surface arc-twin messaging for arcs that are actually distinctive.
+  // Two rookies who happen to share "COL '25" aren't a meaningful career pair
+  // — we still accept the guess (game.ts handles that), we just don't tout it.
+  const arcTwins = answered && state.wasCorrect && isDistinctiveArc(player.seasons)
+    ? players
+        .filter((p) => arcSignature(p.seasons) === arcSignature(player.seasons))
+        .map((p) => p.name)
+        .filter((n) => n !== acceptedName)
+    : [];
+  const hasArcTwin = arcTwins.length > 0;
   return (
     <section className="round">
       <CareerArc stints={player.seasons} />
-      <ModeSelector mode={mode} poolSize={poolSize} onChange={onModeChange} />
+      <ModeSelector mode={mode} pendingMode={pendingMode} poolSize={poolSize} onChange={onModeChange} />
       <div className="round__controls">
         <button
           type="button"
@@ -90,9 +106,9 @@ export function RoundView({
           <div>
             {state.wasCorrect ? (
               hasArcTwin ? (
-                <>Correct! <strong>{state.acceptedName ?? player.name}</strong> shares this career arc.</>
+                <>Correct! <strong>{acceptedName}</strong> shares this career arc with <strong>{formatList(arcTwins)}</strong>.</>
               ) : (
-                <>Correct! This player is <strong>{player.name}</strong>.</>
+                <>Correct! This player is <strong>{acceptedName}</strong>.</>
               )
             ) : (
               <>

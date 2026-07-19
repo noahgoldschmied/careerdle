@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createInitialRound, roundReducer } from "./game.ts";
+import { createInitialRound, resultBucket, roundReducer } from "./game.ts";
 import type { RoundState } from "./game.ts";
 import type { Player } from "./types.ts";
 
@@ -17,46 +17,43 @@ function pending(currentId: number): RoundState {
     gaveUp: false,
     hintsShown: 0,
     usedIds: new Set([currentId]),
-    buckets: { none: 0, one: 0, two: 0, three: 0, wrong: 0 },
     acceptedName: null,
   };
 }
 
 describe("createInitialRound", () => {
-  it("starts pending with empty buckets, 0 hints, current in used", () => {
+  it("starts pending with 0 hints, current in used", () => {
     const s = createInitialRound(P);
     expect(s.phase).toBe("pending");
     expect(s.hintsShown).toBe(0);
     expect(s.gaveUp).toBe(false);
-    expect(s.buckets).toEqual({ none: 0, one: 0, two: 0, three: 0, wrong: 0 });
     expect(s.usedIds.has(s.currentId)).toBe(true);
   });
 });
 
 describe("roundReducer — guessing", () => {
-  it("correct guess with 0 hints buckets into 'none'", () => {
+  it("correct guess with 0 hints scores as 'none'", () => {
     const n = roundReducer(pending(1), { type: "guess", guess: "sidney crosby" }, P);
     expect(n).toMatchObject({ phase: "answered", wasCorrect: true });
-    expect(n.buckets).toEqual({ none: 1, one: 0, two: 0, three: 0, wrong: 0 });
+    expect(resultBucket(n)).toBe("none");
   });
 
   it("wrong guess reveals hint 1 and stays pending", () => {
     const n = roundReducer(pending(1), { type: "guess", guess: "Wayne Gretzky" }, P);
     expect(n.phase).toBe("pending");
     expect(n.hintsShown).toBe(1);
-    expect(n.buckets.wrong).toBe(0);
   });
 
-  it("correct guess after 1 hint buckets into 'one'", () => {
+  it("correct guess after 1 hint scores as 'one'", () => {
     let s = pending(1);
     s = roundReducer(s, { type: "guess", guess: "Wayne Gretzky" }, P);
     s = roundReducer(s, { type: "guess", guess: "Sidney Crosby" }, P);
     expect(s.phase).toBe("answered");
     expect(s.wasCorrect).toBe(true);
-    expect(s.buckets).toEqual({ none: 0, one: 1, two: 0, three: 0, wrong: 0 });
+    expect(resultBucket(s)).toBe("one");
   });
 
-  it("correct guess after 3 hints buckets into 'three'", () => {
+  it("correct guess after 3 hints scores as 'three'", () => {
     let s = pending(1);
     s = roundReducer(s, { type: "guess", guess: "wrong-1" }, P);
     s = roundReducer(s, { type: "guess", guess: "wrong-2" }, P);
@@ -64,10 +61,10 @@ describe("roundReducer — guessing", () => {
     expect(s.hintsShown).toBe(3);
     expect(s.phase).toBe("pending");
     s = roundReducer(s, { type: "guess", guess: "Sidney Crosby" }, P);
-    expect(s.buckets).toEqual({ none: 0, one: 0, two: 0, three: 1, wrong: 0 });
+    expect(resultBucket(s)).toBe("three");
   });
 
-  it("fourth wrong guess after 3 hints buckets into 'wrong'", () => {
+  it("fourth wrong guess after 3 hints scores as 'wrong'", () => {
     let s = pending(1);
     s = roundReducer(s, { type: "guess", guess: "w1" }, P);
     s = roundReducer(s, { type: "guess", guess: "w2" }, P);
@@ -75,7 +72,7 @@ describe("roundReducer — guessing", () => {
     s = roundReducer(s, { type: "guess", guess: "w4" }, P);
     expect(s.phase).toBe("answered");
     expect(s.wasCorrect).toBe(false);
-    expect(s.buckets.wrong).toBe(1);
+    expect(resultBucket(s)).toBe("wrong");
   });
 
   it("guess is a no-op when already answered", () => {
@@ -86,23 +83,23 @@ describe("roundReducer — guessing", () => {
 });
 
 describe("roundReducer — give up", () => {
-  it("give up reveals all 3 hints and buckets 'wrong'", () => {
+  it("give up reveals all 3 hints and scores 'wrong'", () => {
     const n = roundReducer(pending(1), { type: "giveUp" }, P);
     expect(n.phase).toBe("answered");
     expect(n.wasCorrect).toBe(false);
     expect(n.gaveUp).toBe(true);
     expect(n.hintsShown).toBe(3);
-    expect(n.buckets.wrong).toBe(1);
+    expect(resultBucket(n)).toBe("wrong");
   });
 
-  it("give up after 2 wrong guesses still buckets 'wrong', reveals all 3", () => {
+  it("give up after 2 wrong guesses still scores 'wrong', reveals all 3", () => {
     let s = pending(1);
     s = roundReducer(s, { type: "guess", guess: "w1" }, P);
     s = roundReducer(s, { type: "guess", guess: "w2" }, P);
     expect(s.hintsShown).toBe(2);
     s = roundReducer(s, { type: "giveUp" }, P);
     expect(s.hintsShown).toBe(3);
-    expect(s.buckets.wrong).toBe(1);
+    expect(resultBucket(s)).toBe("wrong");
   });
 
   it("give up is a no-op when already answered", () => {
@@ -113,7 +110,7 @@ describe("roundReducer — give up", () => {
 });
 
 describe("roundReducer — next", () => {
-  it("next resets hints and gaveUp, preserves buckets, picks unused", () => {
+  it("next resets hints and gaveUp, picks unused", () => {
     const s: RoundState = {
       phase: "answered",
       currentId: 1,
@@ -121,7 +118,6 @@ describe("roundReducer — next", () => {
       gaveUp: false,
       hintsShown: 2,
       usedIds: new Set([1]),
-      buckets: { none: 0, one: 0, two: 1, three: 0, wrong: 0 },
       acceptedName: "Sidney Crosby",
     };
     const n = roundReducer(s, { type: "next" }, P);
@@ -131,7 +127,6 @@ describe("roundReducer — next", () => {
     expect(n.wasCorrect).toBeNull();
     expect(n.acceptedName).toBeNull();
     expect(n.currentId).not.toBe(1);
-    expect(n.buckets).toEqual({ none: 0, one: 0, two: 1, three: 0, wrong: 0 });
   });
 
   it("next resets usedIds when everyone has been used", () => {
@@ -142,7 +137,6 @@ describe("roundReducer — next", () => {
       gaveUp: false,
       hintsShown: 0,
       usedIds: new Set([1, 2, 3]),
-      buckets: { none: 3, one: 0, two: 0, three: 0, wrong: 0 },
       acceptedName: "Nathan MacKinnon",
     };
     const n = roundReducer(s, { type: "next" }, P);
@@ -162,7 +156,7 @@ describe("roundReducer — arc twins", () => {
     const players = [daniel, henrik];
     const n = roundReducer(pending(daniel.id), { type: "guess", guess: "Henrik Sedin" }, players);
     expect(n.wasCorrect).toBe(true);
-    expect(n.buckets.none).toBe(1);
+    expect(resultBucket(n)).toBe("none");
   });
 
   it("records the twin the user guessed on acceptedName (canonical form)", () => {

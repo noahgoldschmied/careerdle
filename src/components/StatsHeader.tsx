@@ -1,6 +1,11 @@
+import type { Mode } from "../types.ts";
 import type { Bucket } from "../game.ts";
+import { poolLabel } from "../pools.ts";
 
-interface Props { buckets: Record<Bucket, number>; }
+interface Props {
+  buckets: Record<Bucket, number>;
+  mode: Mode;
+}
 
 const CELLS: { key: Bucket; label: string }[] = [
   { key: "none", label: "0" },
@@ -10,10 +15,13 @@ const CELLS: { key: Bucket; label: string }[] = [
   { key: "wrong", label: "✗" },
 ];
 
-export function StatsHeader({ buckets }: Props) {
+export function StatsHeader({ buckets, mode }: Props) {
   return (
     <header className="stats-header">
-      <span className="stats-header__title">Careerdle</span>
+      <div className="stats-header__title-group">
+        <span className="stats-header__title">Careerdle</span>
+        <span className="stats-header__mode">{poolLabel(mode)}</span>
+      </div>
       <div className="stats-header__buckets">
         <span className="stats-header__buckets-label">Hints needed</span>
         {CELLS.map(({ key, label }) => (
