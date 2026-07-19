@@ -13,6 +13,12 @@ dist-ssr
 *.local
 .cache
 
+# Committed lockfile skipped: corp network blocks the public npm registry, so
+# any lockfile generated here would resolve URLs against the internal Nexus
+# (which Cloudflare cannot auth against). Cloudflare's `npm install` resolves
+# fresh against the public registry each build.
+package-lock.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

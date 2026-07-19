@@ -1,9 +1,12 @@
-import { writeFile, mkdir, readFile } from "node:fs/promises";
+import { writeFile, mkdir, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Player, Pool, SeasonStint } from "../src/types.ts";
 
+const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 const ALL_TIME_POOL_SIZE = 500;
+const ALL_TIME_GOALIE_POOL_SIZE = 100;
 const PAGE_SIZE = 100;
 const CONCURRENCY = 4;
 const MAX_RETRIES = 5;
@@ -23,12 +26,21 @@ interface SkaterRow {
   points: number;
 }
 
+interface GoalieRow {
+  playerId: number;
+  goalieFullName: string;
+  positionCode: string;
+  gamesPlayed: number;
+  wins: number;
+}
+
 interface LandingSeason {
   season: number;
   gameTypeId: number;
   leagueAbbrev: string;
   gamesPlayed: number;
-  points: number;
+  points?: number;
+  wins?: number;
   teamName: { default: string };
 }
 
@@ -131,11 +143,51 @@ async function fetchActive(seasonId: number): Promise<SkaterRow[]> {
   return all;
 }
 
-async function readCachedLanding(id: number): Promise<LandingResponse | null> {
+async function fetchAllTimeGoalies(total: number): Promise<GoalieRow[]> {
+  const sort = encodeURIComponent(
+    JSON.stringify([{ property: "wins", direction: "DESC" }]),
+  );
+  const pageCount = Math.ceil(total / PAGE_SIZE);
+  const pages = await Promise.all(
+    Array.from({ length: pageCount }, (_, i) => {
+      const start = i * PAGE_SIZE;
+      const url =
+        `https://api.nhle.com/stats/rest/en/goalie/summary` +
+        `?limit=${PAGE_SIZE}&start=${start}&sort=${sort}` +
+        `&cayenneExp=gameTypeId=2&isAggregate=true`;
+      return fetchJson<{ data: GoalieRow[] }>(url);
+    }),
+  );
+  return pages.flatMap((p) => p.data).slice(0, total);
+}
+
+async function fetchActiveGoalies(seasonId: number): Promise<GoalieRow[]> {
+  const sort = encodeURIComponent(
+    JSON.stringify([{ property: "wins", direction: "DESC" }]),
+  );
+  const cayenne = encodeURIComponent(
+    `gameTypeId=2 and seasonId=${seasonId}`,
+  );
+  const all: GoalieRow[] = [];
+  let start = 0;
+  while (true) {
+    const url =
+      `https://api.nhle.com/stats/rest/en/goalie/summary` +
+      `?limit=${PAGE_SIZE}&start=${start}&sort=${sort}` +
+      `&cayenneExp=${cayenne}&isAggregate=false`;
+    const res = await fetchJson<{ data: GoalieRow[] }>(url);
+    all.push(...res.data);
+    if (res.data.length < PAGE_SIZE) break;
+    start += PAGE_SIZE;
+  }
+  return all;
+}
+
+async function readCachedLanding(id: number): Promise<{ data: LandingResponse; ageMs: number } | null> {
   const path = fileURLToPath(new URL(`${id}.json`, CACHE_DIR));
   try {
-    const raw = await readFile(path, "utf8");
-    return JSON.parse(raw) as LandingResponse;
+    const [raw, stats] = await Promise.all([readFile(path, "utf8"), stat(path)]);
+    return { data: JSON.parse(raw) as LandingResponse, ageMs: Date.now() - stats.mtimeMs };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw err;
@@ -149,10 +201,13 @@ async function writeCachedLanding(id: number, data: LandingResponse): Promise<vo
 
 async function fetchLanding(id: number, currentSeason: number): Promise<LandingResponse> {
   const cached = await readCachedLanding(id);
-  // Cache is only valid if the player didn't play in the current season —
-  // an in-progress season can change (mid-season trades, appended games).
-  const touchesCurrent = cached?.seasonTotals.some((s) => s.season === currentSeason);
-  if (cached && !touchesCurrent) return cached;
+  if (cached) {
+    // Retired players (no current-season row) — cache never goes stale.
+    // Active players — trust the cache for CACHE_MAX_AGE_MS so re-runs within
+    // the same day don't refetch the entire active pool.
+    const touchesCurrent = cached.data.seasonTotals.some((s) => s.season === currentSeason);
+    if (!touchesCurrent || cached.ageMs < CACHE_MAX_AGE_MS) return cached.data;
+  }
   const fresh = await fetchJson<LandingResponse>(
     `https://api-web.nhle.com/v1/player/${id}/landing`,
   );
@@ -204,19 +259,27 @@ function careerPointsFromLanding(landing: LandingResponse): number {
     .reduce((sum, s) => sum + (s.points ?? 0), 0);
 }
 
+function careerWinsFromLanding(landing: LandingResponse): number {
+  return landing.seasonTotals
+    .filter((s) => s.leagueAbbrev === "NHL" && s.gameTypeId === 2)
+    .reduce((sum, s) => sum + (s.wins ?? 0), 0);
+}
+
 interface Candidate {
   playerId: number;
-  skaterFullName: string;
+  fullName: string;
   positionCode: string;
   pools: Set<Pool>;
 }
 
 function unionCandidates(
-  allTime: SkaterRow[],
-  active: SkaterRow[],
+  allTimeSkaters: SkaterRow[],
+  activeSkaters: SkaterRow[],
+  allTimeGoalies: GoalieRow[],
+  activeGoalies: GoalieRow[],
 ): Candidate[] {
   const byId = new Map<number, Candidate>();
-  const add = (rows: SkaterRow[], tag: Pool) => {
+  const addSkaters = (rows: SkaterRow[], tag: Pool) => {
     for (const r of rows) {
       const existing = byId.get(r.playerId);
       if (existing) {
@@ -224,15 +287,33 @@ function unionCandidates(
       } else {
         byId.set(r.playerId, {
           playerId: r.playerId,
-          skaterFullName: r.skaterFullName,
+          fullName: r.skaterFullName,
           positionCode: r.positionCode,
           pools: new Set([tag]),
         });
       }
     }
   };
-  add(allTime, "allTime");
-  add(active, "active");
+  const addGoalies = (rows: GoalieRow[], tag: Pool) => {
+    for (const r of rows) {
+      const existing = byId.get(r.playerId);
+      if (existing) {
+        existing.pools.add(tag);
+      } else {
+        // goalie/summary omits positionCode; force "G".
+        byId.set(r.playerId, {
+          playerId: r.playerId,
+          fullName: r.goalieFullName,
+          positionCode: "G",
+          pools: new Set([tag]),
+        });
+      }
+    }
+  };
+  addSkaters(allTimeSkaters, "allTime");
+  addSkaters(activeSkaters, "active");
+  addGoalies(allTimeGoalies, "allTime");
+  addGoalies(activeGoalies, "active");
   return [...byId.values()];
 }
 
@@ -260,17 +341,27 @@ async function pool<T, R>(
 async function main() {
   await mkdir(fileURLToPath(CACHE_DIR), { recursive: true });
 
-  console.log("Bootstrapping (teams, season, all-time, active) in parallel...");
-  const [teams, allTime, [currentSeason, active]] = await Promise.all([
+  console.log("Bootstrapping (teams, season, skaters, goalies) in parallel...");
+  const [teams, allTimeSkaters, allTimeGoalies, seasonPack] = await Promise.all([
     fetchTeamMap(),
     fetchAllTime(ALL_TIME_POOL_SIZE),
-    fetchCurrentSeasonId().then(async (id) => [id, await fetchActive(id)] as const),
+    fetchAllTimeGoalies(ALL_TIME_GOALIE_POOL_SIZE),
+    fetchCurrentSeasonId().then(async (id) => {
+      const [activeSkaters, activeGoalies] = await Promise.all([
+        fetchActive(id),
+        fetchActiveGoalies(id),
+      ]);
+      return { id, activeSkaters, activeGoalies };
+    }),
   ]);
+  const currentSeason = seasonPack.id;
+  const activeSkaters = seasonPack.activeSkaters;
+  const activeGoalies = seasonPack.activeGoalies;
   console.log(
-    `  ${teams.size} teams (season ${currentSeason}), ${allTime.length} all-time, ${active.length} active`,
+    `  ${teams.size} teams (season ${currentSeason}); skaters: ${allTimeSkaters.length} all-time / ${activeSkaters.length} active; goalies: ${allTimeGoalies.length} all-time / ${activeGoalies.length} active`,
   );
 
-  const candidates = unionCandidates(allTime, active);
+  const candidates = unionCandidates(allTimeSkaters, activeSkaters, allTimeGoalies, activeGoalies);
   console.log(`Unioned to ${candidates.length} candidates`);
 
   console.log(
@@ -280,8 +371,8 @@ async function main() {
   const players = await pool(candidates, CONCURRENCY, async (c) => {
     try {
       const landing = await fetchLanding(c.playerId, currentSeason);
-      const seasons = toStints(landing, teams, c.skaterFullName);
-      const careerPoints = careerPointsFromLanding(landing);
+      const seasons = toStints(landing, teams, c.fullName);
+      const isGoalie = c.positionCode === "G";
       done++;
       if (done % 25 === 0 || done === candidates.length) {
         console.log(`  ${done}/${candidates.length}`);
@@ -289,17 +380,18 @@ async function main() {
       if (seasons.length === 0) return null;
       const player: Player = {
         id: c.playerId,
-        name: c.skaterFullName,
+        name: c.fullName,
         position: c.positionCode,
         seasons,
         pools: [...c.pools],
-        careerPoints,
+        careerPoints: isGoalie ? 0 : careerPointsFromLanding(landing),
         birthCountry: landing.birthCountry ?? "",
       };
+      if (isGoalie) player.careerWins = careerWinsFromLanding(landing);
       return player;
     } catch (err) {
       console.warn(
-        `  failed ${c.playerId} ${c.skaterFullName}: ${(err as Error).message}`,
+        `  failed ${c.playerId} ${c.fullName}: ${(err as Error).message}`,
       );
       return null;
     }

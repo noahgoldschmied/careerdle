@@ -102,6 +102,15 @@
   gap: 8px;
 }
 
+.hints__heading {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 0 4px;
+}
+
 .hints__item {
   display: flex;
   align-items: baseline;

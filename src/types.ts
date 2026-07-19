@@ -8,6 +8,7 @@ export interface Player {
   seasons: SeasonStint[];
   pools: Pool[];
   careerPoints: number;
+  careerWins?: number;
   birthCountry: string;
 }
 

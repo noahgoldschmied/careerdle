@@ -6,6 +6,7 @@ import { createInitialRound, roundReducer } from "./game.ts";
 import { derivePool } from "./pools.ts";
 import { StatsHeader } from "./components/StatsHeader.tsx";
 import { RoundView } from "./components/RoundView.tsx";
+import { formatCountry } from "./countries.ts";
 
 function App() {
   const [players, setPlayers] = useState<Player[] | null>(null);
@@ -58,6 +59,16 @@ function Game({ pool, mode, onModeChange }: GameProps) {
   );
   const current = pool.find((p) => p.id === state.currentId)!;
 
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const stat = current.position === "G"
+      ? `wins: ${current.careerWins ?? 0}`
+      : `pts: ${current.careerPoints}`;
+    console.log(
+      `[dev] answer: ${current.name} | pos: ${current.position} | ${stat} | country: ${formatCountry(current.birthCountry)}`,
+    );
+  }, [current]);
+
   return (
     <div className="app">
       <StatsHeader buckets={state.buckets} />
@@ -70,6 +81,7 @@ function Game({ pool, mode, onModeChange }: GameProps) {
           poolSize={pool.length}
           onModeChange={onModeChange}
           onGuess={(name) => dispatch({ type: "guess", guess: name })}
+          onRevealHint={() => dispatch({ type: "revealHint" })}
           onGiveUp={() => dispatch({ type: "giveUp" })}
           onNext={() => dispatch({ type: "next" })}
         />

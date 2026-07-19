@@ -19,6 +19,7 @@ export interface RoundState {
 
 export type RoundAction =
   | { type: "guess"; guess: string }
+  | { type: "revealHint" }
   | { type: "giveUp" }
   | { type: "next" };
 
@@ -136,6 +137,14 @@ export function roundReducer(state: RoundState, action: RoundAction, players: Pl
         phase: "answered",
         wasCorrect: false,
         buckets: bumpBucket(state.buckets, "wrong"),
+      };
+    }
+    case "revealHint": {
+      if (state.phase !== "pending") return state;
+      if (state.hintsShown >= HINT_CAP) return state;
+      return {
+        ...state,
+        hintsShown: (state.hintsShown + 1) as 0 | 1 | 2 | 3,
       };
     }
     case "giveUp": {
