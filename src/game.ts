@@ -11,6 +11,10 @@ export interface RoundState {
   hintsShown: 0 | 1 | 2 | 3;
   usedIds: Set<number>;
   buckets: Record<Bucket, number>;
+  // Canonical name of the accepted arc-twin the user matched on a correct
+  // guess. Null on incorrect or give-up. Lets the UI show what the user
+  // guessed instead of the round's target.
+  acceptedName: string | null;
 }
 
 export type RoundAction =
@@ -47,6 +51,7 @@ export function createInitialRound(players: Player[]): RoundState {
     hintsShown: 0,
     usedIds: new Set([first.id]),
     buckets: emptyBuckets(),
+    acceptedName: null,
   };
 }
 
@@ -61,6 +66,15 @@ function acceptedNames(target: Player, players: Player[]): string[] {
   return players
     .filter((p) => arcSignature(p.seasons) === sig)
     .map((p) => p.name);
+}
+
+function matchAcceptedName(
+  guess: string,
+  target: Player,
+  players: Player[],
+): string | null {
+  const key = normalize(guess);
+  return acceptedNames(target, players).find((n) => normalize(n) === key) ?? null;
 }
 
 function normalize(name: string): string {
@@ -90,6 +104,7 @@ function nextRound(state: RoundState, players: Player[]): RoundState {
     hintsShown: 0,
     usedIds: new Set([...usedIds, next.id]),
     buckets: state.buckets,
+    acceptedName: null,
   };
 }
 
@@ -98,13 +113,13 @@ export function roundReducer(state: RoundState, action: RoundAction, players: Pl
     case "guess": {
       if (state.phase !== "pending") return state;
       const target = findById(players, state.currentId);
-      const accepted = new Set(acceptedNames(target, players).map(normalize));
-      const isMatch = accepted.has(normalize(action.guess));
-      if (isMatch) {
+      const matched = matchAcceptedName(action.guess, target, players);
+      if (matched !== null) {
         return {
           ...state,
           phase: "answered",
           wasCorrect: true,
+          acceptedName: matched,
           buckets: bumpBucket(state.buckets, bucketFor(state.hintsShown)),
         };
       }

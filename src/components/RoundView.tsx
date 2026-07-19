@@ -69,12 +69,13 @@ export function RoundView({
       {answered && (
         <div className={`round__result ${state.wasCorrect ? "is-correct" : "is-wrong"}`}>
           <div>
-            {state.wasCorrect
-              ? "Correct!"
-              : state.gaveUp
-                ? "Gave up."
-                : "Wrong."}
-            {" "}The answer was <strong>{player.name}</strong>.
+            {state.wasCorrect ? (
+              <>Correct! <strong>{state.acceptedName ?? player.name}</strong> shares this career arc.</>
+            ) : (
+              <>
+                {state.gaveUp ? "Gave up." : "Wrong."} The answer was <strong>{player.name}</strong>.
+              </>
+            )}
           </div>
           <button type="button" onClick={onNext}>Next player →</button>
         </div>

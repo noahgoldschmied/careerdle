@@ -18,6 +18,7 @@ function pending(currentId: number): RoundState {
     hintsShown: 0,
     usedIds: new Set([currentId]),
     buckets: { none: 0, one: 0, two: 0, three: 0, wrong: 0 },
+    acceptedName: null,
   };
 }
 
@@ -121,12 +122,14 @@ describe("roundReducer — next", () => {
       hintsShown: 2,
       usedIds: new Set([1]),
       buckets: { none: 0, one: 0, two: 1, three: 0, wrong: 0 },
+      acceptedName: "Sidney Crosby",
     };
     const n = roundReducer(s, { type: "next" }, P);
     expect(n.phase).toBe("pending");
     expect(n.hintsShown).toBe(0);
     expect(n.gaveUp).toBe(false);
     expect(n.wasCorrect).toBeNull();
+    expect(n.acceptedName).toBeNull();
     expect(n.currentId).not.toBe(1);
     expect(n.buckets).toEqual({ none: 0, one: 0, two: 1, three: 0, wrong: 0 });
   });
@@ -140,6 +143,7 @@ describe("roundReducer — next", () => {
       hintsShown: 0,
       usedIds: new Set([1, 2, 3]),
       buckets: { none: 3, one: 0, two: 0, three: 0, wrong: 0 },
+      acceptedName: "Nathan MacKinnon",
     };
     const n = roundReducer(s, { type: "next" }, P);
     expect(n.usedIds.size).toBe(1);
@@ -159,6 +163,18 @@ describe("roundReducer — arc twins", () => {
     const n = roundReducer(pending(daniel.id), { type: "guess", guess: "Henrik Sedin" }, players);
     expect(n.wasCorrect).toBe(true);
     expect(n.buckets.none).toBe(1);
+  });
+
+  it("records the twin the user guessed on acceptedName (canonical form)", () => {
+    const players = [daniel, henrik];
+    const n = roundReducer(pending(daniel.id), { type: "guess", guess: "henrik sedin" }, players);
+    expect(n.acceptedName).toBe("Henrik Sedin");
+  });
+
+  it("records the target's own name when the user guesses the target", () => {
+    const players = [daniel, henrik];
+    const n = roundReducer(pending(daniel.id), { type: "guess", guess: "Daniel Sedin" }, players);
+    expect(n.acceptedName).toBe("Daniel Sedin");
   });
 
   it("does not accept a non-twin's name", () => {
