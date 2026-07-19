@@ -379,3 +379,152 @@
   color: var(--text-muted);
   align-self: flex-end;
 }
+
+/* --- mobile --- */
+
+@media (max-width: 640px) {
+  .app {
+    padding: 12px 12px 32px;
+    gap: 14px;
+  }
+
+  .stats-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: var(--radius);
+  }
+
+  .stats-header__title {
+    font-size: 20px;
+  }
+
+  .stats-header__buckets {
+    margin-left: 0;
+    flex: 1 1 100%;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px 5px;
+  }
+
+  .stats-header__buckets-label {
+    grid-column: 1 / -1;
+    margin: 0 0 2px;
+  }
+
+  .stats-header__bucket {
+    display: flex;
+    justify-content: center;
+    padding: 4px 4px;
+    gap: 4px;
+    min-width: 0;
+  }
+
+  .stats-header__bucket-label {
+    font-size: 12px;
+  }
+
+  .stats-header__bucket-value {
+    font-size: 13px;
+  }
+
+  .stats-header__bucket {
+    padding: 3px 8px;
+    gap: 3px;
+  }
+
+  .round {
+    padding: 16px 14px;
+    gap: 18px;
+    border-radius: var(--radius);
+  }
+
+  .round__controls {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .round__controls .guess-input {
+    flex: 1 1 100%;
+    order: -1;
+  }
+
+  .round__controls button {
+    flex: 1 1 0;
+    padding: 11px 12px;
+    font-size: 14px;
+  }
+
+  .round__result {
+    padding: 14px 16px;
+    font-size: 14px;
+    gap: 12px;
+  }
+
+  .round__result button {
+    padding: 10px 14px;
+    width: 100%;
+  }
+
+  .career-arc {
+    gap: 6px;
+    justify-content: center;
+  }
+
+  .team-chip {
+    width: 72px;
+    padding: 8px 3px;
+    gap: 4px;
+  }
+
+  .team-chip__logo,
+  .team-chip__tri {
+    width: 40px;
+    height: 40px;
+  }
+
+  .team-chip__tri {
+    font-size: 12px;
+  }
+
+  .team-chip__label {
+    font-size: 10px;
+    letter-spacing: -0.4px;
+  }
+
+  .hints__item {
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+
+  .mode-selector__btn {
+    min-width: 0;
+    padding: 9px 10px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 380px) {
+  .team-chip {
+    width: 66px;
+    padding: 8px 3px;
+  }
+  .team-chip__logo,
+  .team-chip__tri {
+    width: 36px;
+    height: 36px;
+  }
+  .team-chip__label {
+    font-size: 9px;
+    letter-spacing: -0.4px;
+  }
+  .stats-header__bucket {
+    padding: 3px 2px;
+  }
+  .stats-header__bucket-label {
+    font-size: 11px;
+  }
+  .stats-header__bucket-value {
+    font-size: 12px;
+  }
+}
